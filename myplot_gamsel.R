@@ -20,10 +20,11 @@ my_plot.gamsel <-
     termmat=drop(predict.gamsel(gamsel.out,x,index=index,type="terms"))
     lambda=gamsel.out$lambda[index]
     
-    y = matrix(NA, nrow = nrow(data$X), ncol = p)
-    for (j in 1:p){
-      y[,j] = data$U[,((j-1)*deg+1):(j*deg)] %*% data$beta[((j-1)*deg+1):(j*deg)] + data$X[,j] * data$alpha[j]
-    }  
+    # y = matrix(NA, nrow = nrow(data$X), ncol = p)
+    # for (j in 1:p){
+    #   y[,j] = data$U[,((j-1)*deg+1):(j*deg)] %*% data$beta[((j-1)*deg+1):(j*deg)] + data$X[,j] * data$alpha[j]
+    # }
+    y = data$y_mat
     if(missing(ylims))ylims=range(y)
     if (type == "binary"){
       y_bin = predict.gamsel(gamsel.out,x,index=index,type = "response") > 0.5
