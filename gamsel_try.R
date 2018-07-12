@@ -1,3 +1,4 @@
+library(tictoc)
 library(gamsel)
 library(ggplot2)
 library(dplyr)
@@ -25,66 +26,53 @@ beta_9 = c(-200/9, 1100/9, -200, 100, 0)
 beta_10 = c(3/2, -3, 0, 0, 0)
 beta_nonlinear = c(beta_6, beta_7, beta_8, beta_9, beta_10)
 
+
 gamma0 = 0.4
 degree = 5
-sample_size =  2000
+sample_size =  10000
 no_var = 25
 fixed_beta = c(rep(0, degree*5), beta_nonlinear, rep(0, degree*(no_var-10)))
-data = control_gendata(n=2000, p=25,k.lin=5,k.nonlin=5,deg=degree,sigma=0.5,
+data = control_gendata(n=sample_size, p=no_var,k.lin=5,k.nonlin=5,deg=degree,sigma=0.5,
                   fixed_X = matrix(runif(sample_size*no_var), sample_size, no_var), fixed_beta = fixed_beta)
-bases = pseudo.bases(data$X, degree=10, df=5)
+bases = pseudo.bases(data$X, degree=10, df=8)
 
-### Truncated version 
-# index = data$X[,6:10]<0.05 & data$X[,6:10]>-0.05
-# index_f = as.logical(index[,1]*index[,2]*index[,3]*index[,4]*index[,5])
-# trunc_X = data$X[index_f,]
-# trunc_y = data$yb[index_f]
-# trunc_bases = pseudo.bases(trunc_X, degree=10, df=5)
-# 
-# 
-# gamsel.binout = gamsel(trunc_X, trunc_y, bases = trunc_bases, family = "binomial", gamma = gamma0)
-# gamsel.bincv=cv.gamsel(trunc_X, trunc_y, bases = trunc_bases, family = "binomial", gamma = gamma0)
-# par(mfrow=c(5,5), mars(1,1,1,1))
-# my_plot.gamsel(data=data, deg = degree, 
-#                gamsel.binout,newx=trunc_X,index=gamsel.bincv$index.1se, rugplot=F, factor = 0.2, type = "binary")
 
 ### Fit the logistic model
+# tic("GAMSEL model fitting")
+# gamsel.binout = gamsel(data$X, data$yb, bases = bases, family = "binomial", gamma = gamma0)
+# gamsel.bincv=cv.gamsel(data$X, data$yb, bases=bases, family = "binomial", gamma = gamma0)
+# toc()
+# 
+# par(mfrow=c(3,5), mars(1,1,1,1))
+# my_plot.gamsel(data=data, deg = degree,
+#                gamsel.binout, newx=data$X,index=gamsel.bincv$index.min,
+#                which = 1:15, rugplot=F, factor = 0.2, type = "binary")
 
-gamsel.binout = gamsel(data$X, data$yb, bases = bases, family = "binomial", gamma = gamma0)
-gamsel.bincv=cv.gamsel(data$X, data$yb, bases=bases, family = "binomial", gamma = gamma0)
+## Define lambda myself
+tic("GAMSEL model fitting")
+gamsel.binout = gamsel(data$X, data$yb, num_lambda = 50, lambda = seq(5,0.1, length.out = 50), bases = bases, family = "binomial", gamma = gamma0)
+toc()
+gamsel.bincv=cv.gamsel(data$X, data$yb, lambda = seq(5,0.1, length.out = 50), bases=bases, family = "binomial", gamma = gamma0)
+# toc()
 par(mfrow=c(3,5), mars(1,1,1,1))
 my_plot.gamsel(data=data, deg = degree,
-               gamsel.binout, newx=data$X,index=gamsel.bincv$index.1se,
+               gamsel.binout, newx=data$X,index=50,
                which = 1:15, rugplot=F, factor = 0.2, type = "binary")
+
+# par(mfrow=c(5,5), mars(1,1,1,1))
+# for (num in c(10,20,30,40,50)){
+#   my_plot.gamsel(data=data, deg = degree,
+#                  gamsel.binout, newx=data$X,index=num,
+#                  which = 6:10, rugplot=F, factor = 0.1, type = "binary")
+# }
+
 
 
 
 ### Fit the linear model
 
-gamsel.out = gamsel(data$X, data$y, bases = bases, gamma = gamma0)
-gamsel.cv=cv.gamsel(data$X,data$y,bases=bases, gamma = gamma0)
-par(mfrow=c(3,5), mars(1,1,1,1))
-my_plot.gamsel(data=data, deg = degree,
-               gamsel.out,newx=data$X,index=gamsel.cv$index.1se, which = 1:15, type = "notbinary")
-
- 
-### Poly basis plot
-
-# j=5
-# par(mfrow=c(2,3), mars(1,1,1,1))
-# for (i in 1:degree){
-#   o = order(data$X[,j])
-#   plot(data$X[o,j], data$U[o,(j-1)*degree+i], type = "l")
-# }
-
-
-### Different gamma
-# gamma_list = c(0.5,0.7,0.9)
-# for (each in gamma_list){
-#   gamsel.binout = gamsel(data$X, data$yb, bases = bases, family = "binomial", gamma = each)
-#   gamsel.bincv=cv.gamsel(data$X,data$yb,bases=bases, family = "binomial", gamma = each)
-#   par(mfrow=c(3,5), mars(1,1,1,1))
-#   my_plot.gamsel(data=data, deg = degree,
-#                  gamsel.binout,newx=data$X,index=gamsel.bincv$index.1se, 
-#                  which = 1:15, rugplot=F, factor = 0.2, type = "binary")
-# }
+# gamsel.out = gamsel(data$X, data$y, bases = bases, gamma = gamma0)
+# gamsel.cv=cv.gamsel(data$X,data$y,bases=bases, gamma = gamma0)
+# par(mfrow=c(3,5), mars(1,1,1,1))
+# my_plot.gamsel(data=data, deg = degree,
+#                gamsel.out,newx=data$X,index=gamsel.cv$index.1se, which = 1:15, type = "notbinary")

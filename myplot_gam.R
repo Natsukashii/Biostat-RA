@@ -28,16 +28,17 @@ my_plot.gam <-
     colvals[non_linear]="red"
     
     
-    y = matrix(NA, nrow = nrow(data$X), ncol = p)
-    for (j in 1:p){
-      y[,j] = data$U[,((j-1)*deg+1):(j*deg)] %*% data$beta[((j-1)*deg+1):(j*deg)] + data$X[,j] * data$alpha[j]
-    }  
+    # y = matrix(NA, nrow = nrow(data$X), ncol = p)
+    # for (j in 1:p){
+    #   y[,j] = data$U[,((j-1)*deg+1):(j*deg)] %*% data$beta[((j-1)*deg+1):(j*deg)] + data$X[,j] * data$alpha[j]
+    # }  
+    y = data$y_mat
     if(missing(ylims))ylims=range(y)
     if (type == "binary"){
       y_bin = predict(gam_fit, type = "response") > 0.5
       y_bin = as.numeric(y_bin)
     }
-    for (each in 1:p){
+    for (each in which){
       if (each %in% linear){
         o=order(data$X[,each])
         index = grep(lin_pattern[each], colnames(pred))
