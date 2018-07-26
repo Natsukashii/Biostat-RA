@@ -1,9 +1,10 @@
 #include <assert.h>
 #include <R.h>
 #include <Rinternals.h>
+#include <string.h>
 #include <Rmath.h>
 #include <math.h>
-#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 #include <stdlib.h>
 #include "gamsel.h"
 #include <R_ext/Rdynload.h>
@@ -224,8 +225,8 @@ double calculateObjective(int *n, int *p, double *X, double *U, double *y,
   if(*family == 0) obj*=0.5;
   obj += lasso_penalty + group_penalty + 0.5*spline_penalty;
   // obj = obj/(*n);  // Apply 1/n factor
-  Free(resid);
-  Free(Dbeta);
+  free(resid);
+  free(Dbeta);
   return obj;
 }
 
@@ -265,7 +266,7 @@ void updateIntercept(double *alpha0, int *n, double *y, double *fit, int *family
     // hard code:
     // alpha0[0] = 0.05;
     alpha0[0] = new_alpha0;
-    Free(fit_no_intercept);
+    free(fit_no_intercept);
   } 
 }
 
@@ -317,14 +318,14 @@ int updateAlpha(int j, int *n, double *y, double *x, double *fit, double *lambda
       fit[i] += x[i]*(alphas[j] - alpha_old);
     }
   }
-  Free(resid);
+  free(resid);
   return nonzero;
 }
 
 
 
 // Beta vector update
-int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas, double *lambdas_alpha, double *psis, double *D, int *degrees, int *cum_degrees, double *betas, double *alphas, double *z, int *family) {
+int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas, double *lambdas_alpha, double *psis, double *D, int *degrees, int *cum_degrees, double *betas, double *alphas, double *z, int *family, double *W) {
   double *resid = Calloc(*n, double);
   double *UjBj = Calloc(*n, double);
   double *DinvUjr = Calloc(degrees[j], double);
@@ -351,7 +352,7 @@ int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas
     }
     double norm_DinvUjr = sqrt(F77_CALL(ddot)(degrees+j, DinvUjr, &inc_one, DinvUjr, &inc_one));
     // Check if beta_j is 0
-    if(norm_DinvUjr < lambdas[j]) {
+    if(norm_DinvUjr > lambdas[j]) {
       for(int i=0; i<degrees[j]; i++) {
         betas[cum_degrees[j] + i] = 0.0;
       }
@@ -369,131 +370,104 @@ int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas
       for(int i=0; i<degrees[j]; i++) {
         betas[cum_degrees[j]+i] = (DinvUjr[i]/sqrt(D[cum_degrees[j]+i]))/(Dstar[i] + lambdas[j]/c);
       }
-      Free(Dstar);
+      free(Dstar);
     }
-  } else if(*family == 1){
+  }  else if(*family == 1) {  // Logistic regression updates without approximation
+  	double *VT = Calloc((*n)*(degrees[j]), double);
+  	double *VTr = Calloc(degrees[j], double);
+  	double *QTVTr = Calloc(degrees[j], double);
+  	
     // Calculate residual
     vectorDifference(n,z,fit,resid);
-    // Adjust resdiual for contribution of beta_j
-    F77_CALL(dgemv)("N", n, degrees+j, &one, U+(*n)*(cum_degrees[j]), n, betas+cum_degrees[j], &inc_one, &zero, UjBj, &inc_one);
+    
+    // Adjust resdiual (W^{1/2} * resid) for contribution of beta_j
+    F77_CALL(dgemv)("N", n, degrees+j, &one, U+(*n)*(cum_degrees[j]), n, betas+cum_degrees[j], &inc_one, &zero, UjBj, &inc_one); 
     for(int i=0; i<*n; i++) {
       resid[i] += UjBj[i];
+      resid[i] = resid[i] * sqrt(W[i]);
     }
-    // Compute D^{-1/2} * U_j^T * resid
-    F77_CALL(dgemv)("T", n, degrees+j, &one, U+(*n)*(cum_degrees[j]), n, resid, 
-      &inc_one, &zero, DinvUjr, &inc_one);
-    for(int i=0; i<degrees[j]; i++) {
-      DinvUjr[i] = DinvUjr[i] / sqrt(D[cum_degrees[j]+i]);
+    
+    // Compute V^T = D^{-1/2} * U_j^T * W^{1/2}
+    for(int k=0; k<degrees[j]; k++) {
+    	for(int i=0; i<*n; i++) 
+	  VT[k*(*n)+i] = U[(*n)*(cum_degrees[j])+k*(*n)+i] * sqrt(W[i]) / sqrt(D[cum_degrees[j]+k]);
     }
-    double norm_DinvUjr = sqrt(F77_CALL(ddot)(degrees+j, DinvUjr, &inc_one, DinvUjr, &inc_one));
+    
+    // Compute V^T * r = D^{-1/2} * U_j^T * W * resid
+    F77_CALL(dgemv)("T", n, degrees+j, &one, VT, n, resid, &inc_one, &zero, VTr, &inc_one);
+      
+    double norm_VTr = 0;
+    for (int i=0;i<degrees[j];i++){
+    	norm_VTr += pow(VTr[i],2);
+	}
+	norm_VTr = sqrt(norm_VTr);
+	
     // Check if beta_j is 0
-    if(norm_DinvUjr < 4*lambdas[j]) {
+    if(norm_VTr < lambdas[j]) {
       for(int i=0; i<degrees[j]; i++) {
         betas[cum_degrees[j] + i] = 0.0;
       }
       nonzero = 0;
-    } else {
-      double *Dstar = Calloc(degrees[j], double);
-      // Form D*
+    } 
+	else { 
+      double *Dtilde = Calloc(pow((degrees[j]),2)+1, double);
+      // Caculate D_tilde = V^T * V
+      F77_CALL(dsyrk)("U", "T", degrees+j, n, &one, VT, n, &zero, Dtilde, degrees+j);
       for(int i=0; i<degrees[j]; i++) {
-        Dstar[i] = 4*psis[j] + 1/D[cum_degrees[j]+i];
+      	for(int k=i+1; k<degrees[j]; k++){
+      		Dtilde[(degrees[j])*i+k] = Dtilde[(degrees[j])*k+i];
+		  }
       }
-      Dstar[0] -= 4*psis[j];  // Adjust first entry
-      // Line search to find c
-      double c = lineSearch(degrees[j], Dstar, DinvUjr, 4*lambdas[j]);
-      // Update beta using equation (4.3) and do
-      // for(int i=0; i<degrees[j]; i++) {
-      //   betas[cum_degrees[j]+i] = (DinvUjr[i]/sqrt(D[cum_degrees[j]+i]))/(Dstar[i] + 4*lambdas[j]/c);
-      // }
-  
-      double *new_beta = malloc(degrees[j]*sizeof(double));
-      for(int i=0; i < degrees[j]; i++) {
-        new_beta[i] = (DinvUjr[i]/sqrt(D[cum_degrees[j]+i]))/(Dstar[i] + 4*lambdas[j]/c);
-      }
-      // Adjust beta and alpha to match
-      // if(sign(alphas[j])*sign(new_beta[0]) < -0.1) {
-      //   double A = 0.0;
-      //   for(int i=1; i<degrees[j]; i++) {
-      //     A += pow(new_beta[i], 2);
-      //   }
-      //   double mintheta = calculateThetaMin(lambdas_alpha[j], lambdas[j], alphas[j], 
-      //     new_beta[0], A);
-      //   alphas[j] += mintheta;
-      //   new_beta[0] -= mintheta;
-      // }
       
-      // Backtracking step (backtrack until sign is not opposite of alpha[j])
-      // int loop_counter = 0;
-      // while(loop_counter < 20 && sign(alphas[j])*sign(new_beta[0]) < -0.1) {
-      //   for(int i=0; i<degrees[j]; i++) {
-      //     new_beta[i] = old_beta[i] + SCALE_FACTOR*(new_beta[i] - old_beta[i]);
-      //   }
-      //   loop_counter++;
-      // }
-      // if(sign(alphas[j])*sign(new_beta[0]) < -0.1 && fabs(new_beta[0]) > 1) {
-      //   new_beta[0] += alphas[j];
-      // }
+      // Caculate D_tilde = V^T * V + psi * I_{(-1)}
+      for(int i=0; i<degrees[j]; i++) {
+        Dtilde[i*(degrees[j])+i] += psis[j];
+      }
+      Dtilde[0] -= psis[j];  // Adjust first entry
+      
+	  double *Q = calloc(pow((degrees[j]),2)+1, sizeof(double));
+	  memcpy(Q, Dtilde, pow((degrees[j]),2)*sizeof(double));
+	  double *Lam = Calloc(degrees[j], double);
+      int lwork = 3*degrees[j]-1;
+      double *work = Calloc(lwork, double);
+      int info = 100;
+      // Eigen-decomposition 
+      F77_CALL(dsyev)("V", "U", degrees+j, Q, degrees+j, Lam, work, &lwork, &info);
+      
+      // Caculate Q^T * V^T * r
+      F77_CALL(dgemv)("T", degrees+j, degrees+j, &one, Q, degrees+j, VTr, &inc_one, &zero, QTVTr, &inc_one);
+      
+      // Line search to find c
+      double c = lineSearch(degrees[j], Lam, QTVTr, lambdas[j]);
+      
+  	  // Caculate Dtilde = (Dtilde + lambda_tilde/c * I)^{(-1)}
+      for(int i=0; i<degrees[j]; i++) {
+        Dtilde[i*(degrees[j])+i] += lambdas[j]/c;
+      }
+      int *ipiv = Calloc(degrees[j], int);
+      F77_CALL(dgetrf)(degrees+j, degrees+j, Dtilde, degrees+j, ipiv, &info);
+      F77_CALL(dgetri)(degrees+j, Dtilde, degrees+j, ipiv, work, degrees+j, &info);
+      
+      // Caculate new beta
+	  double *new_beta = malloc(degrees[j]*sizeof(double));
+	  F77_CALL(dgemv)("N", degrees+j, degrees+j, &one, Dtilde, degrees+j, VTr, &inc_one, &zero, new_beta, &inc_one); 
+      for(int i=0; i<degrees[j]; i++) {
+        new_beta[i] = new_beta[i]/sqrt(D[cum_degrees[j]+i]);
+      }
       
       for(int i=0; i<degrees[j]; i++) {
         betas[cum_degrees[j]+i] = new_beta[i];
       }
-      Free(Dstar);
+      free(Dtilde);
+      free(Q);
+      free(Lam);
+      free(work);
+      free(ipiv);
       free(new_beta);
-    }
-  } else if(*family == 2) {  // Logistic regression updates
-    double *gradient = Calloc(degrees[j], double);
-    double *DinvTheta = Calloc(degrees[j], double);
-    double *prob = Calloc(*n, double);
-    double *grad_plus_dinv = Calloc(degrees[j], double);
-    double norm_grad_plus_dinv;
-    for(int i=0; i<degrees[j]; i++) {
-      prob[i] = 1/(1 + exp(-fit[i]));
-      if(prob[i] < EPS) {
-        prob[i] = EPS;
-      } else if(prob[i] > 1-EPS) {
-        prob[i] = 1;
-      }
-    }
-    vectorDifference(n, y, prob, resid);  // y - yhat
-    // F77_CALL(dgemv)("N", n, degrees+j, &one, U+(*n)*(cum_degrees[j]), n, betas+cum_degrees[j], &inc_one, &zero, UjBj, &inc_one);
-    // for(int i=0; i<*n; i++) {
-    //   resid[i] += UjBj[i];
-    //   // resid[i] *= 0.25;
-    // }
-    // Compute gradient = D^{-1/2} * U_j^T * resid
-    F77_CALL(dgemv)("T", n, degrees+j, &one, U+(*n)*(cum_degrees[j]), n, resid, 
-      &inc_one, &zero, gradient, &inc_one);
-    for(int i=0; i<degrees[j]; i++) {
-      gradient[i] = gradient[i] / sqrt(D[cum_degrees[j]+i]);
-      // Compute D^{-1} theta = D^{-1/2} beta
-      DinvTheta[i] = betas[cum_degrees[j]+i] / sqrt(D[cum_degrees[j]+i]);
-      // DinvTheta[i] = betas[cum_degrees[j]+i] * sqrt(D[cum_degrees[j]+i]);
-      grad_plus_dinv[i] = gradient[i] + DinvTheta[i]/4;
-    }
-    norm_grad_plus_dinv = sqrt(F77_CALL(ddot)(degrees+j, grad_plus_dinv, &inc_one, grad_plus_dinv, &inc_one));
-
-    if(norm_grad_plus_dinv <= lambdas[j]) {
-      for(int i=0; i<degrees[j]; i++) {
-        betas[cum_degrees[j] + i] = 0.0;
-      } 
-    } else {
-      double *Dstar = Calloc(degrees[j], double);
-      // Form D*
-      for(int i=0; i<degrees[j]; i++) {
-        Dstar[i] = psis[j] + 0.25/D[cum_degrees[j]+i];
-      }
-      Dstar[0] -= psis[j];  // Adjust first entry
-      // Line search to find c
-      double c = lineSearch(degrees[j], Dstar, grad_plus_dinv, lambdas[j]);
-      // Update beta using equation (4.3)
-      for(int i=0; i<degrees[j]; i++) {
-        betas[cum_degrees[j]+i] = (grad_plus_dinv[i]/sqrt(D[cum_degrees[j]+i]))/(Dstar[i] + lambdas[j]/c);
-      }
-      Free(Dstar);
-    }
-    Free(gradient);
-    Free(DinvTheta);
-    Free(prob);
+	}
+    free(VT);
+    free(VTr);
+    free(QTVTr);
   }
   /** Fitted value update step */
   double *beta_diff = Calloc(degrees[j], double);
@@ -511,18 +485,17 @@ int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas
     for(int i=0; i<*n; i++) {
       fit[i] += Ujbeta_diff[i];
     }
-    Free(Ujbeta_diff);
+    free(Ujbeta_diff);
   }
-  
-  Free(resid);
-  Free(UjBj);
-  Free(old_beta);
-  Free(DinvUjr);
-  Free(beta_diff);
+  free(resid);
+  free(UjBj);
+  free(old_beta);
+  free(DinvUjr);
+  free(beta_diff);
   return nonzero;
 }
 
-SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
+SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
                SEXP R_degrees, SEXP R_D, SEXP R_gamma, SEXP R_psis,
                SEXP R_family, SEXP R_MAXITER, SEXP R_lambda_seq, SEXP R_num_lambda,
                SEXP R_traceit) {
@@ -699,7 +672,7 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
           } else {
             w[i] = prob[i]*(1-prob[i]);
           }
-          w[i] = 0.25;
+          // w[i] = 0.25;
           z[i] = fit[i] + (y[i] - prob[i])/w[i];
         }
       }
@@ -716,7 +689,7 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
           }
         }
         if(degrees[j] > 1) {
-          is_nonzero = updateBeta(j, &n, y, U, fit, lambdas_beta, lambdas_alpha, psis, D, degrees, cum_degrees, betas, alphas, z, &family);
+          is_nonzero = updateBeta(j, &n, y, U, fit, lambdas_beta, lambdas_alpha, psis, D, degrees, cum_degrees, betas, alphas, z, &family, w);
           if(is_nonzero > active_beta[j]) {
             active_beta[j] = 1;
             changedFlag = 1;
@@ -748,7 +721,7 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
               w[i] = prob[i]*(1-prob[i]);
               // w[i] = 0.25;
             }
-            w[i] = 0.25;
+            // w[i] = 0.25;
             z[i] = fit[i] + (y[i] - prob[i])/w[i];
           }
           num_quadratic_updates++;
@@ -772,7 +745,7 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
               updateAlpha(j, &n, y, X+(n*j), fit, lambdas_alpha, alphas, z, w, &family);
             }  
             if(degrees[j] > 1 && active_beta[j] == 1) {
-              updateBeta(j, &n, y, U, fit, lambdas_beta, lambdas_alpha, psis, D, degrees, cum_degrees, betas, alphas, z,  &family);
+              updateBeta(j, &n, y, U, fit, lambdas_beta, lambdas_alpha, psis, D, degrees, cum_degrees, betas, alphas, z,  &family, w);
             }    
           }
           new_obj = calculateObjective(&n, &p, X, U, y, D, degrees, cum_degrees, &numcolsU,
@@ -866,17 +839,17 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
     
   // Unprotect memory and return
   UNPROTECT(12);
-  Free(active_alpha);
-  Free(active_beta);
-  Free(alpha0);
-  Free(alphas);
-  Free(betas);
-  Free(fit);
-  Free(frac_deviance_explained);
-  Free(prob);
-  Free(residual_deviance);
-  Free(w);
-  Free(z);
+  free(active_alpha);
+  free(active_beta);
+  free(alpha0);
+  free(alphas);
+  free(betas);
+  free(fit);
+  free(frac_deviance_explained);
+  free(prob);
+  free(residual_deviance);
+  free(w);
+  free(z);
   free(cum_degrees);
   free(lambda_seq);
   free(lambdas_alpha);
@@ -887,11 +860,11 @@ SEXP gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
 } 
 
 
-extern SEXP gamselFit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP my_gamselFit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] =
   {
-   {"gamselFit", (DL_FUNC) &gamselFit, 13},
+   {"my_gamselFit", (DL_FUNC) &my_gamselFit, 13},
    {NULL, NULL, 0}
   };
 
