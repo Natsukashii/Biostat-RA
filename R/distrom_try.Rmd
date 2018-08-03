@@ -1,0 +1,9 @@
+---
+title: "distrom_try"
+output: pdf_document
+---
+```{r}
+library(distrom)
+data = read.table("D:/OneDrive/phd/RA/codesandslides/dataset/BreastTissue.txt", header = T)
+
+```
