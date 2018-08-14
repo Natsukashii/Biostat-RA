@@ -34,7 +34,7 @@ beta_nonlinear = c(beta_6, beta_7, beta_8, beta_9, beta_10)
 
 gamma0 = 0.4
 degree = 5
-sample_size =  4000
+sample_size =  500
 no_var = 25
 fixed_beta = c(rep(0, degree*5), beta_nonlinear, rep(0, degree*(no_var-10)))
 data = control_gendata(n=sample_size, p=no_var,k.lin=5,k.nonlin=5,deg=degree,sigma=0.5,
@@ -57,23 +57,23 @@ bases = pseudo.bases(data$X, degree=10,df=8)
 # test_gamsel.binout = my_gamsel(data$X, data$yb, bases = bases, family = "binomial", gamma = gamma0)
 # toc() num_lambda = 50,lambda = seq(5,0.1, length.out = 50)
 
-## MY GAMSEL model fitting
-tic("MY GAMSEL model fitting")
-my_gamsel.binout = my_gamsel(data$X, data$yb, num_lambda = 1,lambda = 0.1, bases = bases, family = "binomial", gamma = gamma0)
-toc()
-par(mfrow=c(3,5), mars(1,1,1,1))
-my_plot.gamsel(data=data, deg = degree,
-               my_gamsel.binout, newx=data$X,index=1,
-               which = 1:15, rugplot=F, factor = 0.2, type = "binary")
-
-## GAMSEL model fitting
-tic("GAMSEL model fitting")
-gamsel.binout = gamsel(data$X, data$yb, num_lambda = 1,lambda = 0.1, bases = bases, family = "binomial", gamma = gamma0)
-toc()
-par(mfrow=c(3,5), mars(1,1,1,1))
-my_plot.gamsel(data=data, deg = degree,
-               gamsel.binout, newx=data$X,index=1,
-               which = 1:15, rugplot=F, factor = 0.2, type = "binary")
+# ## MY GAMSEL model fitting
+# tic("MY GAMSEL model fitting")
+# my_gamsel.binout = my_gamsel(data$X, data$yb, num_lambda = 1,lambda = 0.1, bases = bases, family = "binomial", gamma = gamma0)
+# toc()
+# par(mfrow=c(3,5), mars(1,1,1,1))
+# my_plot.gamsel(data=data, deg = degree,
+#                my_gamsel.binout, newx=data$X,index=1,
+#                which = 1:15, rugplot=F, factor = 0.2, type = "binary")
+# 
+# ## GAMSEL model fitting
+# tic("GAMSEL model fitting")
+# gamsel.binout = gamsel(data$X, data$yb, num_lambda = 1,lambda = 0.1, bases = bases, family = "binomial", gamma = gamma0)
+# toc()
+# par(mfrow=c(3,5), mars(1,1,1,1))
+# my_plot.gamsel(data=data, deg = degree,
+#                gamsel.binout, newx=data$X,index=1,
+#                which = 1:15, rugplot=F, factor = 0.2, type = "binary")
 
 
 # ## Camparing betas
@@ -88,17 +88,17 @@ my_plot.gamsel(data=data, deg = degree,
 
 
 ### Using GAM
-# tbl_data = as_tibble(data.frame(cbind(data$X,data$yb)))
-# gam_scope = gam.scope(tbl_data, response = 26, arg = "df=5", form = F)
-# var_c = c()
-# for (i in 1:25) {
-#   var_c = c(var_c, gam_scope[[i]][3])
-# }
-# tic("model fitting")
-# full_fit = gam(as.formula(paste("X26~", paste(var_c, collapse = "+"))), family="binomial", tbl_data)
-# toc()
-# par(mfrow=c(3,5), mars(1,1,1,1))
-# my_plot.gam(data, full_fit, deg = degree, gam_scope, which = 1:15, factor = 0.1)
+tbl_data = as_tibble(data.frame(cbind(data$X,data$yb)))
+gam_scope = gam.scope(tbl_data, response = 26, arg = "df=3", form = F)
+var_c = c()
+for (i in 1:25) {
+  var_c = c(var_c, gam_scope[[i]][3])
+}
+tic("model fitting")
+full_fit = gam(as.formula(paste("X26~", paste(var_c, collapse = "+"))), family="binomial", tbl_data)
+toc()
+par(mfrow=c(3,5), mars(1,1,1,1))
+my_plot.gam(data, full_fit, deg = degree, gam_scope, which = 1:15, factor = 0.1)
 
 
 

@@ -5,5 +5,29 @@ output: pdf_document
 ```{r}
 library(distrom)
 data = read.table("D:/OneDrive/phd/RA/codesandslides/dataset/BreastTissue.txt", header = T)
-
+x_mat = as.matrix(data[-1])
+y_mat = factor(as.matrix(data[1]))
+temp = collapse(x_mat, y_mat)
+fit <- dmr(NULL, x_mat, y_mat, verb=1)
+par(mfrow=c(3,2))
+for(j in 1:6){
+plot(fit[[j]])
+mtext(names(fit)[j],font=2,line=2) }
+```
+```{r}
+library(MASS)
+data(fgl)
+## make your cluster
+## FORK is faster but memory heavy, and doesn't work on windows.
+cl <- makeCluster(2,type=ifelse(.Platform$OS.type=="unix","FORK","PSOCK"))
+print(cl)
+## fit in parallel
+fits <- dmr(cl, fgl[,1:9], fgl$type, verb=1)
+## its good practice stop the cluster once you're done
+stopCluster(cl)
+## Individual Poisson model fits and AICc selection
+par(mfrow=c(3,2))
+for(j in 1:6){
+plot(fits[[j]])
+mtext(names(fits)[j],font=2,line=2) }
 ```
