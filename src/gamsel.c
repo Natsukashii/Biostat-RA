@@ -148,6 +148,21 @@ double calculateDeviance(int n, double *fit, double *y) {
   free(probs);
   return(-2*loglik);
 }
+
+double calculatePoDev(int n, double *fit, double *y) {
+  double loglik = 0.0;
+  double logyi = 0.0;
+  for(int i=0; i<n; i++) {
+  	if (y[i] == 0.0){
+  		logyi = 0.0; 
+  	} else{
+  		logyi = log(y[i]);
+  	}
+    loglik += y[i]*(logyi-1)-y[i]*fit[i]-exp(fit[i]);
+  }
+  return(2*loglik);
+}
+
 /* Computes objective function at given values of the parameters. */
 double calculateObjective(int *n, int *p, double *X, double *U, double *y, 
                           double *D, int *degrees, int *cum_degrees, int *numcolsU, 
@@ -195,8 +210,12 @@ double calculateObjective(int *n, int *p, double *X, double *U, double *y,
     for(int i=0; i<*n; i++) {
       obj += -(y[i]*fit[i] - log(1 + exp(fit[i])));
     }
+  } else if(*family == 2){ // Poisson model
+  	// Add negative log-likelihood to objective
+  	for(int i=0; i<*n; i++) {
+      obj += -(y[i]*fit[i] - exp(fit[i]));
+  	}
   }
-
   // Calculate lasso penalty
   for(int i=0; i<*p; i++) {
     if(active_alpha[i] == 1) {
@@ -207,7 +226,7 @@ double calculateObjective(int *n, int *p, double *X, double *U, double *y,
   double *Dbeta = calloc(*numcolsU, sizeof(double));
   for(int i=0; i<*numcolsU; i++) {
     Dbeta[i] = betas[i]*D[i];
-  }
+  } 
   
   // Calculate group penalty and spline penalty
   for(int i=0; i<*p; i++) {
@@ -238,7 +257,8 @@ void updateIntercept(double *alpha0, int *n, double *y, double *fit, int *family
       diff += (y[i] - fit[i] + alpha0[0]);
     }
     alpha0[0] = diff/(*n);
-  } else if (*family == 1) {
+  } 
+  if (*family == 1) {
     // 1-d Newton-Raphson algorithm for logistic intercept
     double *fit_no_intercept = calloc(*n, sizeof(double));
     double tol = 1e-5;
@@ -268,6 +288,41 @@ void updateIntercept(double *alpha0, int *n, double *y, double *fit, int *family
     alpha0[0] = new_alpha0;
     free(fit_no_intercept);
   } 
+  if (*family == 2){
+  	// 1-d Newton-Raphson algorithm for Poisson intercept
+  	double *fit_no_intercept = calloc(*n, sizeof(double));
+    double tol = 1e-5;
+    double old_alpha0 = alpha0[0];
+    double new_alpha0 = alpha0[0] + 1;
+    double deriv;
+    double second_deriv;
+    double exp_term;
+    // Rprintf("the initial alpha0 = %f \n", alpha0[0]);
+    for(int i=0; i<*n; i++) {
+      fit_no_intercept[i] = fit[i] - alpha0[0];
+      // if (i<5){
+      // 	Rprintf("for obs %o: fit = %f \n", i, fit[i]);
+      // }
+    }
+    // Do Newton steps until convergence
+    while(fabs(new_alpha0 - old_alpha0) > tol) {
+      old_alpha0 = new_alpha0;
+      deriv = 0.0; second_deriv=0.0;
+      // Calculate first and second derivatives
+      for(int i=0; i<*n; i++) {
+        exp_term = exp(old_alpha0 + fit_no_intercept[i]);
+        deriv += y[i] - exp_term;
+        second_deriv += -exp_term;
+        // Rprintf("In this iter, old_alpha0 + fit_no_intercept[i] = %f \n", old_alpha0 + fit_no_intercept[i]);
+      }
+      // Newton-Raphson step
+      new_alpha0 = old_alpha0 - deriv/second_deriv;
+    }
+    // hard code:
+    alpha0[0] = 0.05;
+    // alpha0[0] = new_alpha0;
+    free(fit_no_intercept);
+  } 
 }
 
 // Alpha vector update
@@ -294,7 +349,7 @@ int updateAlpha(int j, int *n, double *y, double *x, double *fit, double *lambda
     } else {
       alphas[j] = dotprod + lambdas[j];
     }
-  } else if(*family == 1) {  // Logistic regression
+  } else if( (*family == 1) || (*family==2) ) {  // Logistic regression
     vectorDifference(n, z, fit, resid);  // Calculate full residual
     double w_sum = 0.0;
     // Adjust fit for contribution of alpha_j, and calculate inner product
@@ -372,7 +427,7 @@ int updateBeta(int j, int *n, double *y, double *U, double *fit, double *lambdas
       }
       free(Dstar);
     }
-  }  else if(*family == 1) {  // Logistic regression updates without approximation
+  }  else if( (*family == 1) || (*family == 2) ) {  // Logistic regression updates without approximation
   	double *VT = calloc((*n)*(degrees[j]), sizeof(double));
   	double *VTr = calloc(degrees[j], sizeof(double));
   	double *QTVTr = calloc(degrees[j], sizeof(double));
@@ -565,11 +620,11 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
   double *lambdas_beta = malloc(p*sizeof(double)); 
   // Fitted values
   double *fit = calloc(n, sizeof(double));
-  // Working response (logistic regression)
+  // Working response (logistic regression and poisson regression)
   double *z = calloc(n, sizeof(double));
   // Probabilities (logistic regression)
   double *prob = calloc(n, sizeof(double));
-  // Weights (logistic regression)
+  // Weights (logistic regression and poisson regression)
   double *w = calloc(n, sizeof(double));
   
   // Allocate output
@@ -610,7 +665,21 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
     free(null_fit);
     // Rprintf("Null deviance = %f \n", null_deviance);
   }
-  
+ // Calculate null deviance for poisson model
+  if(family == 2) {
+    double *null_fit = malloc(n*sizeof(double));
+    double y_sum = 0.0;
+    for(int i = 0; i<n; i++) {
+      y_sum += y[i];
+    }
+    double fitted_val = log((y_sum/n));
+    for(int i=0; i<n; i++) {
+      null_fit[i] = fitted_val;
+    }
+    null_deviance = calculatePoDev(n, null_fit, y);
+    free(null_fit);
+    // Rprintf("Null deviance = %f \n", null_deviance);
+  } 
   int iter=1; // Count number of passes through the variables
   int num_quadratic_updates = 0;
   int num_outer_loops = 0;
@@ -667,7 +736,7 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
             prob[i] = 0;
             w[i] = EPS;
           } else if(prob[i] >= 1-EPS) {
-            prob[1] = 1;
+            prob[i] = 1; // minor correction?
             w[i] = EPS;
           } else {
             w[i] = prob[i]*(1-prob[i]);
@@ -676,12 +745,25 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
           z[i] = fit[i] + (y[i] - prob[i])/w[i];
         }
       }
-      
+      if(family == 2) {
+        for(int i=0; i<n; i++) {
+          // w_i = mu_i  
+          w[i] = exp(fit[i]);
+          z[i] = fit[i] + y[i]/w[i] - 1.0;
+        }
+      }
+      // Rprintf("alpha0=%f\n",alpha0[0]);
+      // for (int i=0;i<10;i++){
+      // 	Rprintf("fit[%o]=%f", i,fit[i]);
+      // }
       updateIntercept(alpha0, &n, y, fit, &family);
-      
+      // Rprintf("alpha0=%f\n",alpha0[0]);
+      // for (int i=0;i<10;i++){
+      //   Rprintf("fit[%o]=%f", i,fit[i]);
+      // }
       /** Determine active set by checking which are non-0*/
       for(int j=0; j<p; j++) {
-        if(family == 1) {
+        if((family == 1)  || (family ==2)) {
           is_nonzero = updateAlpha(j, &n, y, X+(n*j), fit, lambdas_alpha, alphas, z, w, &family);
           if(is_nonzero > active_alpha[j]) {
             active_alpha[j] = 1;
@@ -715,7 +797,7 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
               prob[i] = 0;
               w[i] = EPS;
             } else if(prob[i] >= 1-EPS) {
-              prob[1] = 1;
+              prob[i] = 1;
               w[i] = EPS;
             } else {
               w[i] = prob[i]*(1-prob[i]);
@@ -723,6 +805,14 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
             }
 //             w[i] = 0.25;
             z[i] = fit[i] + (y[i] - prob[i])/w[i];
+          }
+          num_quadratic_updates++;
+        }
+        if(family == 2) {
+          for(int i=0; i<n; i++) {
+          	// w_i = mu_i  
+          	w[i] = exp(fit[i]);
+          	z[i] = fit[i] + y[i]/w[i] - 1.0; 
           }
           num_quadratic_updates++;
         }
@@ -736,6 +826,7 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
         while(iter<*INTEGER(R_MAXITER)) {
           /** End quadratic update */
           updateIntercept(alpha0, &n, y, fit, &family);
+          // Rprintf("alpha0 = %f, fit[5]=%f", alpha0[0],fit[5]);
           for(int j=0; j<p; j++){
             // if(sign(alphas[j]*betas[cum_degrees[j]])<0) {
             //   alphas[j] = alphas[j] + betas[cum_degrees[j]];
@@ -743,9 +834,11 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
             // }
             if(active_alpha[j] == 1) {
               updateAlpha(j, &n, y, X+(n*j), fit, lambdas_alpha, alphas, z, w, &family);
+              // Rprintf("alpha here: fit[5]=%f", fit[5]);
             }  
             if(degrees[j] > 1 && active_beta[j] == 1) {
               updateBeta(j, &n, y, U, fit, lambdas_beta, lambdas_alpha, psis, D, degrees, cum_degrees, betas, alphas, z,  &family, w);
+              // Rprintf("beta here: fit[5]=%f", fit[5]);
             }    
           }
           new_obj = calculateObjective(&n, &p, X, U, y, D, degrees, cum_degrees, &numcolsU,
@@ -783,14 +876,18 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
       REAL(R_all_betas)[numcolsU*idx + i] = betas[i];
     }
     // Residual deviance calculation
-    if(family == 1) {
-      residual_deviance[idx] = calculateDeviance(n, fit, y);
+    if( (family == 1) || (family==2) ) {
+      if (family==1){
+      	residual_deviance[idx] = calculateDeviance(n, fit, y);
+      } else {
+      	residual_deviance[idx] = calculatePoDev(n, fit, y);
+      }
       frac_deviance_explained[idx] = (null_deviance - residual_deviance[idx])/null_deviance;
       if(traceit == 1) {
         Rprintf("Percent deviance explained = %f \n", frac_deviance_explained[idx]);
       }
       // Terminate if deviance explained gets too high
-      if(frac_deviance_explained[idx] > MAX_DEV_EXPLAINED) {
+      if(frac_deviance_explained[idx] > MAX_DEV_EXPLAINED) q{
         Rprintf("Did not reach end of path.  Deviance explained exceeded %f \n", MAX_DEV_EXPLAINED);
         break;
       }
@@ -857,7 +954,7 @@ SEXP my_gamselFit(SEXP R_y, SEXP R_X, SEXP R_U, SEXP R_tol,
   free(psis);
   free(resid);
   return result;
-} 
+}
 
 
 extern SEXP my_gamselFit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);

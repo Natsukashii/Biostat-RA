@@ -1,9 +1,12 @@
 my_gamsel <-
-  function (x,y, num_lambda = 50,lambda=NULL, family = c("gaussian","binomial"), degrees = rep(10,p), gamma = 0.4, dfs=rep(5,p), bases=pseudo.bases(x,degrees,dfs,parallel=parallel,...), tol = 1e-04, max_iter = 2000,traceit=FALSE, parallel=FALSE, ...) 
+  function (x,y, num_lambda = 50,lambda=NULL, family = c("gaussian","binomial","poisson"), degrees = rep(10,p), gamma = 0.4, dfs=rep(5,p), bases=pseudo.bases(x,degrees,dfs,parallel=parallel,...), tol = 1e-04, max_iter = 2000,traceit=FALSE, parallel=FALSE, ...) 
 {
   this.call=match.call()
   family=match.arg(family)
-  family_id <- as.integer(ifelse(family == "gaussian", 0, 1))
+  family_id <- as.integer(switch(family,
+                                 "gaussian"=0,
+                                 "binomial"=1,
+                                 "poisson"=2))
   n <- length(y)
   p <- ncol(x)
   ##Create U, X, D and psis  from the bases

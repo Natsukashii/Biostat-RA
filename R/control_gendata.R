@@ -27,6 +27,7 @@ control_gendata <-
     y <- truef + sigma*rnorm(n)
     probs <- 1/(1 + exp(-truef))
     yb <- rbinom(n,1,probs)
-    list(X=X,y=y,yb=yb, y_mat = y_mat, alpha=alpha, beta=beta, U=U, truef=truef)
+    yp <- rpois(n,exp(truef))
+    list(X=X,y=y,yb=yb, yp=yp, y_mat = y_mat, alpha=alpha, beta=beta, U=U, truef=truef)
   }
 

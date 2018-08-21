@@ -30,6 +30,10 @@ my_plot.gamsel <-
       y_bin = predict.gamsel(gamsel.out,x,index=index,type = "response") > 0.5
       y_bin = as.numeric(y_bin)
     }
+    # if (type == "counts"){
+    #   y_count = predict.gamsel(gamsel.out,x,index=index,type = "response") > 0.5
+    #   y_count = as.numeric(y_bin)
+    # }
     for(ell in which){
       o=order(x[,ell])
       plot(x[o,ell], termmat[o,ell], type='l', ylab=paste("f(v",ell,")",sep=""),xlab=paste("v",ell,sep=""),ylim=ylims,col=colvals[ell],lwd=2,...)

@@ -23,5 +23,6 @@ my_gendata <-
     y <- truef + sigma*rnorm(n)
     probs <- 1/(1 + exp(-truef))
     yb <- rbinom(n,1,probs)
-    list(X=X,y=y,yb=yb, alpha=alpha, beta=beta, U=U, truef=truef)
+    yp <- rpois(n,truef)
+    list(X=X,y=y,yb=yb, yp=yp, alpha=alpha, beta=beta, U=U, truef=truef)
   }
